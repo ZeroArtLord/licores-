@@ -1,0 +1,213 @@
+﻿<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Control de Inventario de Licores</title>
+    <link rel="stylesheet" href="assets/css/styles.css" />
+  </head>
+  <body>
+    <div class="print-header">
+      CONTROL DE INVENTARIO DE LICORES
+    </div>
+    <main class="container">
+      <header class="header">
+        <h1>CONTROL DE INVENTARIO DE LICORES</h1>
+        <p>Sube los tres reportes y calcula el inventario final.</p>
+      </header>
+
+      <section class="card">
+        <div class="file-row">
+          <label class="file-label" for="saint">Subir archivo SAINT</label>
+          <input id="saint" name="saint" type="file" accept=".xlsx,.xls" />
+        </div>
+        <div class="file-row">
+          <label class="file-label" for="caja">Subir archivo CAJA</label>
+          <input id="caja" name="caja" type="file" accept=".xlsx,.xls" />
+        </div>
+        <div class="file-row">
+          <label class="file-label" for="barra">Subir archivo BARRA</label>
+          <input id="barra" name="barra" type="file" accept=".xlsx,.xls" />
+        </div>
+
+        <button id="calcular" class="primary-btn" type="button">
+          CALCULAR INVENTARIO
+        </button>
+        <button id="borrar-cache" class="ghost-btn" type="button">
+          BORRAR ARCHIVOS CARGADOS
+        </button>
+
+        <p id="status" class="status" role="status"></p>
+      </section>
+
+      <section class="card report-card">
+        <div class="report-header">
+          <h2>Resultado</h2>
+          <button id="exportar-pdf" class="ghost-btn no-print" type="button">
+            SACAR PDF
+          </button>
+        </div>
+        <div class="print-title">REPORTE FINAL DE INVENTARIO</div>
+        <div class="edit-toolbar no-print">
+          <label class="edit-toggle">
+            <input id="modo-edicion" type="checkbox" />
+            Modo edicion
+          </label>
+          <label class="edit-toggle">
+            <input id="ocultar-ignorados" type="checkbox" checked />
+            Ocultar ignorados
+          </label>
+          <span id="edit-hint" class="muted">Selecciona filas para unificar o ignorar.</span>
+        </div>
+        <div id="acciones-seleccion" class="selection-bar hidden no-print">
+          <span id="seleccion-count">0 seleccionados</span>
+          <button id="unificar-seleccion" class="secondary-btn" type="button">
+            UNIFICAR SELECCION
+          </button>
+          <button id="limpiar-seleccion" class="ghost-btn" type="button">
+            LIMPIAR SELECCION
+          </button>
+          <div class="selection-category">
+            <select id="categoria-select-bar"></select>
+            <button id="asignar-categoria-bar" class="secondary-btn" type="button">
+              ASIGNAR CATEGORIA
+            </button>
+            <button id="quitar-categoria-bar" class="ghost-btn" type="button">
+              QUITAR CATEGORIA
+            </button>
+          </div>
+        </div>
+        <div class="view-toggle no-print">
+          <button id="ver-original" class="ghost-btn" type="button">VER ORIGINAL</button>
+          <button id="ver-final" class="secondary-btn" type="button">VER RESULTADO</button>
+        </div>
+        <div class="table-wrap">
+          <table id="tabla-original" class="hidden">
+            <thead>
+              <tr>
+                <th>Producto original</th>
+                <th>Normalizado</th>
+                <th>Grupo</th>
+                <th>
+                  Categoria
+                  <div class="header-filter">
+                    <select id="categoria-filtro"></select>
+                  </div>
+                </th>
+                <th>En catalogo</th>
+                <th>En resultado</th>
+                <th>Deposito</th>
+                <th>Caja</th>
+                <th>Barra</th>
+                <th>Estado</th>
+                <th class="actions-col">Acciones</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <table id="tabla-final">
+            <thead>
+              <tr>
+                <th>Producto</th>
+                <th>Botellas</th>
+                <th>Tragos barra</th>
+                <th class="no-print actions-col">Acciones</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card no-print">
+        <h2>Categorias</h2>
+        <p>
+          Crea una categoria, selecciona productos y asignalos en grupo.
+        </p>
+        <div class="category-toolbar">
+          <div class="category-controls">
+            <label for="categoria-select">Categoria</label>
+            <select id="categoria-select"></select>
+            <button id="asignar-categoria" class="secondary-btn" type="button">
+              ASIGNAR SELECCION
+            </button>
+            <button id="quitar-categoria" class="ghost-btn" type="button">
+              QUITAR CATEGORIA
+            </button>
+          </div>
+          <div class="category-controls">
+            <input
+              id="categoria-nueva"
+              type="text"
+              placeholder="Nueva categoria"
+            />
+            <button id="crear-categoria" class="ghost-btn" type="button">
+              CREAR
+            </button>
+          </div>
+          <div id="lista-categorias" class="category-list"></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Aprendizaje</h2>
+        <p>
+          Usa "Unificar" para indicar que dos nombres son el mismo producto, o
+          "Ignorar" para quitarlo del reporte. Luego guarda las reglas y vuelve
+          a calcular.
+        </p>
+        <div class="unificar-panel">
+          <input
+            id="nombre-unificado"
+            type="text"
+            placeholder="Nombre simplificado para el grupo seleccionado"
+          />
+          <button id="aplicar-unificar" class="secondary-btn" type="button">
+            APLICAR UNIFICACION
+          </button>
+          <button id="deshacer-seleccion" class="ghost-btn" type="button">
+            DESHACER SELECCION
+          </button>
+        </div>
+        <div class="pending">
+          <strong>Pendientes:</strong>
+          <div id="lista-pendientes"></div>
+        </div>
+        <div class="grupos-panel">
+          <strong>Grupos detectados:</strong>
+          <div id="lista-grupos" class="grupos-list"></div>
+        </div>
+        <div class="actions">
+          <button id="guardar-reglas" class="secondary-btn" type="button">
+            GUARDAR REGLAS
+          </button>
+          <button id="limpiar-reglas" class="ghost-btn" type="button">
+            LIMPIAR PENDIENTES
+          </button>
+          <button id="resetear-todo" class="ghost-btn" type="button">
+            RESETEAR TODO
+          </button>
+        </div>
+        <p id="status-reglas" class="status" role="status"></p>
+      </section>
+
+      <section class="card">
+        <h2>Revisar CSV</h2>
+        <p>
+          Carga un CSV de faltantes/sobrantes para aplicar reglas rápido.
+        </p>
+        <div class="file-row">
+          <label class="file-label" for="csv-revision">Subir CSV</label>
+          <input id="csv-revision" name="csv-revision" type="file" accept=".csv" />
+        </div>
+        <div id="lista-csv" class="csv-list"></div>
+      </section>
+    </main>
+    <footer class="footer">
+      <div>© 2026 Bytemind Solutions. Todos los derechos reservados.</div>
+      <div>Reporte estructurado y automatizado por Armando Yanez.</div>
+    </footer>
+
+    <script src="assets/js/app.js"></script>
+  </body>
+</html>
