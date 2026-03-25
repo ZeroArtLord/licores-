@@ -11,6 +11,7 @@ const tablaFinalBody = document.querySelector("#tabla-final tbody");
 const tablaOriginalBody = document.querySelector("#tabla-original tbody");
 const guardarReglasBtn = document.getElementById("guardar-reglas");
 const limpiarReglasBtn = document.getElementById("limpiar-reglas");
+const deshacerCambiosBtn = document.getElementById("deshacer-cambios");
 const resetearTodoBtn = document.getElementById("resetear-todo");
 const statusReglasEl = document.getElementById("status-reglas");
 const modoEdicionEl = document.getElementById("modo-edicion");
@@ -41,6 +42,16 @@ const quitarCategoriaBtn = document.getElementById("quitar-categoria");
 const quitarCategoriaBarBtn = document.getElementById("quitar-categoria-bar");
 const listaCategoriasEl = document.getElementById("lista-categorias");
 const categoriaFiltroEl = document.getElementById("categoria-filtro");
+const notifPanelEl = document.getElementById("notif-panel");
+const notifBellBtn = document.getElementById("notif-bell-btn");
+const notifCloseBtn = document.getElementById("notif-close");
+const notifCountEl = document.getElementById("notif-count");
+const notifTextoEl = document.getElementById("notif-texto");
+const verNuevosBtn = document.getElementById("ver-nuevos");
+const verHistorialBtn = document.getElementById("ver-historial");
+const ocultarNuevosBtn = document.getElementById("ocultar-nuevos");
+const listaNuevosEl = document.getElementById("lista-nuevos");
+const listaHistorialEl = document.getElementById("lista-historial");
 
 const pendientesEquivalencias = new Map();
 const pendientesIgnorar = new Set();
@@ -53,6 +64,11 @@ let modoAgregarGrupo = null;
 let displayNames = {};
 let categorias = {};
 let categoriaFiltro = "";
+let mostrarNuevos = false;
+let nuevosProductos = [];
+let historialNuevos = [];
+const undoStack = [];
+let isUndoing = false;
 
 const GROUP_CLASSES = ["group-1", "group-2", "group-3", "group-4", "group-5"];
 const DISPLAY_KEY = "display_names";
@@ -63,6 +79,10 @@ function normalizeKey(value) {
     .toUpperCase()
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function renderNuevoBadge(flag) {
+  return flag ? `<span class="badge-new">NUEVO</span>` : "";
 }
 
 function loadDisplayNames() {
@@ -84,8 +104,12 @@ function getDisplayName(key, fallback) {
   return value ? value : fallback;
 }
 
-function setDisplayName(key, value) {
+function setDisplayName(key, value, record = true) {
   if (!key) return;
+  if (record && !isUndoing) {
+    const prev = displayNames[key] ?? "";
+    undoStack.push({ type: "display", key, prev });
+  }
   const cleaned = String(value || "").trim();
   if (!cleaned) {
     delete displayNames[key];
@@ -136,10 +160,19 @@ function buildCategoriaIndex() {
   return map;
 }
 
-function setCategoriaForKeys(keys, categoria) {
+function setCategoriaForKeys(keys, categoria, record = true) {
   if (!keys || keys.length === 0) return;
   const cat = String(categoria || "").trim();
   if (!cat) return;
+  if (record && !isUndoing) {
+    const catIndex = buildCategoriaIndex();
+    const prev = keys.map((k) => ({
+      key: k,
+      prevCat: catIndex.get(normalizeKey(k)) || "",
+      newCat: cat,
+    }));
+    undoStack.push({ type: "categoria", items: prev });
+  }
   for (const key of keys) {
     for (const [c, list] of Object.entries(categorias)) {
       categorias[c] = (list || []).filter((k) => k !== key);
@@ -154,8 +187,17 @@ function setCategoriaForKeys(keys, categoria) {
   aplicarCambiosVisuales();
 }
 
-function clearCategoriaForKeys(keys) {
+function clearCategoriaForKeys(keys, record = true) {
   if (!keys || keys.length === 0) return;
+  if (record && !isUndoing) {
+    const catIndex = buildCategoriaIndex();
+    const prev = keys.map((k) => ({
+      key: k,
+      prevCat: catIndex.get(normalizeKey(k)) || "",
+      newCat: "",
+    }));
+    undoStack.push({ type: "categoria", items: prev });
+  }
   for (const key of keys) {
     for (const [c, list] of Object.entries(categorias)) {
       categorias[c] = (list || []).filter((k) => k !== key);
@@ -278,7 +320,7 @@ function renderFinal(items, gruposAll) {
     const totalBotellas = deposito + caja;
     const key = normalizeKey(item.producto);
     const displayName = getDisplayName(key, item.producto ?? "");
-    const categoriaActual = categoria || "SIN CATEGORIA";
+    const categoriaActual = normalizeKey(categoria || "SIN CATEGORIA");
     const etiquetaBarra =
       categoriaActual === "VINOS TINTOS" || categoriaActual === "VINOS BLANCOS"
         ? "COPAS"
@@ -353,10 +395,10 @@ function renderFinal(items, gruposAll) {
 
 function normalizarRespuesta(data) {
   if (!data || typeof data !== "object") {
-    return { original: [], final: [], grupos: {}, token: null };
+    return { original: [], final: [], grupos: {}, token: null, nuevos: [] };
   }
   if (Array.isArray(data)) {
-    return { original: [], final: data, grupos: {}, token: null };
+    return { original: [], final: data, grupos: {}, token: null, nuevos: [] };
   }
   if (data.final && Array.isArray(data.final)) {
     return data;
@@ -367,7 +409,7 @@ function normalizarRespuesta(data) {
     caja: valores.caja ?? 0,
     barra: valores.barra ?? 0,
   }));
-  return { original: [], final, grupos: {}, token: null };
+  return { original: [], final, grupos: {}, token: null, nuevos: [] };
 }
 
 function renderPendientes() {
@@ -386,15 +428,29 @@ function renderPendientes() {
     parts.length > 0 ? parts.join(" | ") : "Sin pendientes.";
 }
 
-function addEquivalencia(original, normalizado) {
+function setEquivalencia(original, normalizado, record = true) {
   if (!original || !normalizado) return;
+  if (record && !isUndoing) {
+    const prev = pendientesEquivalencias.has(original)
+      ? pendientesEquivalencias.get(original)
+      : null;
+    undoStack.push({ type: "equiv", original, prev });
+  }
   pendientesEquivalencias.set(original, normalizado);
   renderPendientes();
   aplicarCambiosVisuales();
 }
 
-function addIgnorar(producto) {
+function addEquivalencia(original, normalizado) {
+  setEquivalencia(original, normalizado);
+}
+
+function addIgnorar(producto, record = true) {
   if (!producto) return;
+  if (record && !isUndoing) {
+    const wasPresent = pendientesIgnorar.has(producto);
+    undoStack.push({ type: "ignorar", producto, wasPresent });
+  }
   pendientesIgnorar.add(producto);
   renderPendientes();
   aplicarCambiosVisuales();
@@ -406,7 +462,7 @@ function addIgnorarBatch(productos) {
   for (const producto of productos) {
     if (!producto) continue;
     if (!pendientesIgnorar.has(producto)) {
-      pendientesIgnorar.add(producto);
+      addIgnorar(producto);
       changed = true;
     }
     if (seleccionados.has(producto)) {
@@ -414,8 +470,6 @@ function addIgnorarBatch(productos) {
     }
   }
   if (changed) {
-    renderPendientes();
-    aplicarCambiosVisuales();
     actualizarSeleccionUI();
   }
 }
@@ -538,12 +592,17 @@ async function calcularInventario(event) {
     const detalle = normalizarRespuesta(data);
     ultimoDetalle = detalle;
     baseOriginal = JSON.parse(JSON.stringify(detalle.original || []));
+    nuevosProductos = Array.isArray(detalle.nuevos) ? detalle.nuevos : [];
+    historialNuevos = Array.isArray(detalle.historial_nuevos)
+      ? detalle.historial_nuevos
+      : [];
 
     if (detalle.token) {
       localStorage.setItem(CACHE_KEY, detalle.token);
     }
 
     aplicarCambiosVisuales();
+    renderNotificaciones();
 
     tablaOriginal.classList.remove("hidden");
     tablaFinal.classList.add("hidden");
@@ -551,6 +610,42 @@ async function calcularInventario(event) {
     setStatus("Inventario calculado.");
   } catch (error) {
     setStatus(`Error: ${error.message}`, true);
+  }
+}
+
+function renderNotificaciones() {
+  if (
+    !notifPanelEl ||
+    !notifTextoEl ||
+    !listaNuevosEl ||
+    !listaHistorialEl ||
+    !notifCountEl
+  )
+    return;
+  const totalNuevos = Array.isArray(nuevosProductos) ? nuevosProductos.length : 0;
+  if (totalNuevos === 0) {
+    notifCountEl.classList.add("hidden");
+    notifCountEl.textContent = "";
+    notifTextoEl.textContent = "No hay productos nuevos detectados.";
+  } else {
+    notifCountEl.classList.remove("hidden");
+    notifCountEl.textContent = String(totalNuevos);
+    notifTextoEl.textContent = `Se detecto un nuevo producto que no esta en la base de datos (${totalNuevos}).`;
+  }
+  listaNuevosEl.innerHTML = "";
+  for (const item of nuevosProductos || []) {
+    const row = document.createElement("div");
+    row.className = "csv-item";
+    row.textContent = item.normalizado || item.producto;
+    listaNuevosEl.appendChild(row);
+  }
+  listaHistorialEl.innerHTML = "";
+  for (const item of historialNuevos || []) {
+    const row = document.createElement("div");
+    row.className = "csv-item";
+    const nombre = item.normalizado || item.producto || "";
+    row.textContent = `${nombre} (visto ${item.count || 1}x)`;
+    listaHistorialEl.appendChild(row);
   }
 }
 
@@ -595,7 +690,12 @@ window.addEventListener("DOMContentLoaded", () => {
       const detalle = JSON.parse(cachedDetalle);
       ultimoDetalle = detalle;
       baseOriginal = JSON.parse(JSON.stringify(detalle.original || []));
+      nuevosProductos = Array.isArray(detalle.nuevos) ? detalle.nuevos : [];
+      historialNuevos = Array.isArray(detalle.historial_nuevos)
+        ? detalle.historial_nuevos
+        : [];
       aplicarCambiosVisuales();
+      renderNotificaciones();
     } catch (_) {}
   }
   if (cachedToken) {
@@ -660,6 +760,7 @@ async function designorarProducto(nombre) {
 function limpiarReglas() {
   pendientesEquivalencias.clear();
   pendientesIgnorar.clear();
+  undoStack.length = 0;
   setModoAgregar(null);
   statusReglasEl.textContent = "Pendientes limpiados.";
   renderPendientes();
@@ -678,6 +779,51 @@ function limpiarSeleccion() {
 
 guardarReglasBtn.addEventListener("click", guardarReglas);
 limpiarReglasBtn.addEventListener("click", limpiarReglas);
+if (deshacerCambiosBtn) {
+  deshacerCambiosBtn.addEventListener("click", () => {
+    if (undoStack.length === 0) {
+      statusReglasEl.textContent = "No hay cambios para deshacer.";
+      return;
+    }
+    const action = undoStack.pop();
+    isUndoing = true;
+    if (action.type === "equiv") {
+      if (action.prev === null || action.prev === undefined) {
+        pendientesEquivalencias.delete(action.original);
+      } else {
+        pendientesEquivalencias.set(action.original, action.prev);
+      }
+    } else if (action.type === "ignorar") {
+      if (!action.wasPresent) {
+        pendientesIgnorar.delete(action.producto);
+      } else {
+        pendientesIgnorar.add(action.producto);
+      }
+    } else if (action.type === "display") {
+      setDisplayName(action.key, action.prev, false);
+    } else if (action.type === "categoria") {
+      for (const item of action.items || []) {
+        for (const [c, list] of Object.entries(categorias)) {
+          categorias[c] = (list || []).filter((k) => k !== item.key);
+        }
+        if (item.prevCat) {
+          if (!categorias[item.prevCat]) categorias[item.prevCat] = [];
+          if (!categorias[item.prevCat].includes(item.key)) {
+            categorias[item.prevCat].push(item.key);
+          }
+        }
+      }
+      saveCategorias();
+      renderCategoriasUI();
+      aplicarCambiosVisuales();
+    }
+    isUndoing = false;
+    renderPendientes();
+    actualizarSeleccionUI();
+    aplicarCambiosVisuales();
+    statusReglasEl.textContent = "Cambio deshecho.";
+  });
+}
 
 function toggleSeleccion(row, producto) {
   if (!producto) return;
@@ -723,7 +869,7 @@ function aplicarUnificacionSeleccionada() {
       return;
     }
     for (const producto of seleccion) {
-      pendientesEquivalencias.set(producto, modoAgregarGrupo);
+      setEquivalencia(producto, modoAgregarGrupo);
     }
     seleccionados.clear();
     setModoAgregar(null);
@@ -741,9 +887,9 @@ function aplicarUnificacionSeleccionada() {
     statusReglasEl.textContent = "Selecciona productos para unificar.";
     return;
   }
-  for (const producto of seleccion) {
-    pendientesEquivalencias.set(producto, base);
-  }
+    for (const producto of seleccion) {
+      setEquivalencia(producto, base);
+    }
   seleccionados.clear();
   renderPendientes();
   actualizarSeleccionUI();
@@ -770,6 +916,7 @@ resetearTodoBtn.addEventListener("click", () => {
   pendientesEquivalencias.clear();
   pendientesIgnorar.clear();
   seleccionados.clear();
+  undoStack.length = 0;
   grupoActual = 1;
   setModoAgregar(null);
   statusReglasEl.textContent = "Estado reiniciado.";
@@ -824,7 +971,7 @@ function renderGrupos(grupos) {
       if (!nombreBase) return;
       const base = nombreBase.toUpperCase();
       for (const orig of originales) {
-        pendientesEquivalencias.set(orig, base);
+        setEquivalencia(orig, base);
       }
       renderPendientes();
       aplicarCambiosVisuales();
@@ -832,7 +979,7 @@ function renderGrupos(grupos) {
 
     btnSeparar.addEventListener("click", () => {
       for (const orig of originales) {
-        pendientesEquivalencias.set(orig, orig);
+        setEquivalencia(orig, orig);
       }
       renderPendientes();
       aplicarCambiosVisuales();
@@ -858,6 +1005,9 @@ function renderOriginal(items, grupos, finalSet) {
 
   for (const item of items) {
     if (ocultarIgnoradosEl && ocultarIgnoradosEl.checked && item.ignorado) {
+      continue;
+    }
+    if (mostrarNuevos && item.nuevo !== true) {
       continue;
     }
     const catKey = normalizeKey(item.normalizado || item.producto || "");
@@ -906,6 +1056,8 @@ function renderOriginal(items, grupos, finalSet) {
     const groupTitle = groupItems.map((g) => g.producto).join(" | ");
     const displayName = getDisplayName(normalizeKey(key), key);
     const categoriaLabel = categoriaIndex.get(normalizeKey(key)) || "";
+    const tieneNuevo = groupItems.some((g) => g.nuevo === true);
+    const badgeNuevo = renderNuevoBadge(tieneNuevo);
     const enResultado = finalSet && finalSet.has(normalizeKey(key))
       ? `<span class="en-resultado">EN</span>`
       : "";
@@ -916,7 +1068,7 @@ function renderOriginal(items, grupos, finalSet) {
     const headerRow = document.createElement("tr");
     headerRow.className = `group-row ${groupClassFor(key)}`;
     headerRow.innerHTML = `
-      <td title="${key}">${displayName}</td>
+      <td title="${key}">${displayName} ${badgeNuevo}</td>
       <td>${key}</td>
       <td><span class="grupo-badge" title="${groupTitle}">${groupId}</span></td>
       <td>${categoriaLabel}</td>
@@ -992,6 +1144,7 @@ function renderOriginal(items, grupos, finalSet) {
       : "";
     const displayName = getDisplayName(normalizeKey(item.producto), item.producto);
     const categoriaLabel = categoriaIndex.get(normalizeKey(item.normalizado)) || "";
+    const badgeNuevo = renderNuevoBadge(item.nuevo === true);
 
     const acciones = item.ignorado
       ? `<button class="action-btn btn-unificar" type="button">Unificar</button>
@@ -1008,7 +1161,7 @@ function renderOriginal(items, grupos, finalSet) {
       : `<span class="fuera-catalogo">NO</span>`;
 
     row.innerHTML = `
-      <td title="${item.producto ?? ""}">${displayName ?? ""}</td>
+      <td title="${item.producto ?? ""}">${displayName ?? ""} ${badgeNuevo}</td>
       <td>${item.normalizado ?? ""}</td>
       <td>${isGrouped ? `<span class="grupo-badge" title="${groupTitle}">${groupId}</span>` : ""}</td>
       <td>${categoriaLabel}</td>
@@ -1032,7 +1185,7 @@ function renderOriginal(items, grupos, finalSet) {
         item.producto ?? ""
       );
       if (!nombreBase) return;
-      pendientesEquivalencias.set(item.producto ?? "", nombreBase.toUpperCase());
+      setEquivalencia(item.producto ?? "", nombreBase.toUpperCase());
       statusReglasEl.textContent = `Pendientes: ${pendientesEquivalencias.size} equivalencias, ${pendientesIgnorar.size} ignorar.`;
       renderPendientes();
       aplicarCambiosVisuales();
@@ -1050,7 +1203,7 @@ function renderOriginal(items, grupos, finalSet) {
         designorarProducto(item.producto);
         return;
       }
-      pendientesIgnorar.add(item.producto);
+      addIgnorar(item.producto);
       if (seleccionados.has(item.producto)) {
         seleccionados.delete(item.producto);
       }
@@ -1096,6 +1249,46 @@ if (ocultarIgnoradosEl) {
 if (exportarPdfBtn) {
   exportarPdfBtn.addEventListener("click", () => {
     window.print();
+  });
+}
+
+if (verNuevosBtn) {
+  verNuevosBtn.addEventListener("click", () => {
+    mostrarNuevos = true;
+    aplicarCambiosVisuales();
+    tablaOriginal.classList.remove("hidden");
+    tablaFinal.classList.add("hidden");
+    if (listaNuevosEl) listaNuevosEl.classList.remove("hidden");
+    if (listaHistorialEl) listaHistorialEl.classList.add("hidden");
+  });
+}
+
+if (verHistorialBtn) {
+  verHistorialBtn.addEventListener("click", () => {
+    if (listaNuevosEl) listaNuevosEl.classList.add("hidden");
+    if (listaHistorialEl) listaHistorialEl.classList.remove("hidden");
+  });
+}
+
+if (ocultarNuevosBtn) {
+  ocultarNuevosBtn.addEventListener("click", () => {
+    mostrarNuevos = false;
+    aplicarCambiosVisuales();
+    if (notifPanelEl) notifPanelEl.classList.add("hidden");
+  });
+}
+
+if (notifBellBtn) {
+  notifBellBtn.addEventListener("click", () => {
+    if (!notifPanelEl) return;
+    notifPanelEl.classList.toggle("hidden");
+  });
+}
+
+if (notifCloseBtn) {
+  notifCloseBtn.addEventListener("click", () => {
+    if (!notifPanelEl) return;
+    notifPanelEl.classList.add("hidden");
   });
 }
 

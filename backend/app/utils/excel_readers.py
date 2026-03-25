@@ -7,6 +7,7 @@ Assumptions:
 from __future__ import annotations
 
 from io import BytesIO
+import zipfile
 from pathlib import Path
 from typing import Iterable
 
@@ -35,8 +36,57 @@ def _read_excel(file_path: Path) -> pd.DataFrame:
     return df
 
 
+_WORKBOOK_XML = "xl/workbook.xml"
+_WORKBOOK_XML_REPLACEMENTS = {
+    b"WindowWidth": b"windowWidth",
+    b"WindowHeight": b"windowHeight",
+    b"WindowX": b"windowX",
+    b"WindowY": b"windowY",
+}
+_WORKSHEET_XML_REPLACEMENTS = {
+    b"firstPageNo": b"firstPageNumber",
+}
+
+
+def _sanitize_xlsx_bytes(content: bytes) -> bytes:
+    """
+    Repair common Excel XML attribute casing issues that can crash openpyxl.
+    This is a non-destructive, in-memory fix.
+    """
+    try:
+        zin = zipfile.ZipFile(BytesIO(content), "r")
+    except zipfile.BadZipFile:
+        return content
+
+    if _WORKBOOK_XML not in zin.namelist():
+        return content
+
+    workbook_xml = zin.read(_WORKBOOK_XML)
+    fixed_workbook_xml = workbook_xml
+    for bad, good in _WORKBOOK_XML_REPLACEMENTS.items():
+        fixed_workbook_xml = fixed_workbook_xml.replace(bad, good)
+
+    out = BytesIO()
+    with zipfile.ZipFile(out, "w") as zout:
+        for item in zin.infolist():
+            if item.filename == _WORKBOOK_XML:
+                zout.writestr(item, fixed_workbook_xml)
+                continue
+            if item.filename.startswith("xl/worksheets/") and item.filename.endswith(".xml"):
+                sheet_xml = zin.read(item.filename)
+                fixed_sheet_xml = sheet_xml
+                for bad, good in _WORKSHEET_XML_REPLACEMENTS.items():
+                    fixed_sheet_xml = fixed_sheet_xml.replace(bad, good)
+                zout.writestr(item, fixed_sheet_xml)
+                continue
+            else:
+                zout.writestr(item, zin.read(item.filename))
+    return out.getvalue()
+
+
 def _read_excel_bytes(content: bytes, *, header: int | None = 0) -> pd.DataFrame:
-    df = pd.read_excel(BytesIO(content), header=header)
+    safe_content = _sanitize_xlsx_bytes(content)
+    df = pd.read_excel(BytesIO(safe_content), header=header)
     df = df.dropna(how="all")
     return df
 

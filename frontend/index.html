@@ -10,6 +10,32 @@
     <div class="print-header">
       CONTROL DE INVENTARIO DE LICORES
     </div>
+    <div class="notif-bell no-print">
+      <button id="notif-bell-btn" class="bell-btn" type="button" aria-label="Notificaciones">
+        🔔
+        <span id="notif-count" class="bell-badge hidden"></span>
+      </button>
+    </div>
+    <div id="notif-panel" class="notif-panel hidden no-print">
+      <div class="notif-header">
+        <strong>Notificaciones</strong>
+        <button id="notif-close" class="ghost-btn" type="button">Cerrar</button>
+      </div>
+      <p id="notif-texto"></p>
+      <div class="actions">
+        <button id="ver-nuevos" class="secondary-btn" type="button">
+          VER NUEVOS PRODUCTOS
+        </button>
+        <button id="ver-historial" class="ghost-btn" type="button">
+          VER HISTORIAL
+        </button>
+        <button id="ocultar-nuevos" class="ghost-btn" type="button">
+          CERRAR LISTA
+        </button>
+      </div>
+      <div id="lista-nuevos" class="csv-list"></div>
+      <div id="lista-historial" class="csv-list hidden"></div>
+    </div>
     <main class="container">
       <header class="header">
         <h1>CONTROL DE INVENTARIO DE LICORES</h1>
@@ -180,6 +206,9 @@
         <div class="actions">
           <button id="guardar-reglas" class="secondary-btn" type="button">
             GUARDAR REGLAS
+          </button>
+          <button id="deshacer-cambios" class="ghost-btn" type="button">
+            DESHACER CAMBIO
           </button>
           <button id="limpiar-reglas" class="ghost-btn" type="button">
             LIMPIAR PENDIENTES

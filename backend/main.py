@@ -57,6 +57,8 @@ DATA_INPUT_DIR.mkdir(parents=True, exist_ok=True)
 EQUIV_PATH = DATA_INPUT_DIR / "equivalencias.csv"
 IGNORE_PATH = DATA_INPUT_DIR / "ignorar.csv"
 CATEGORIAS_PATH = DATA_INPUT_DIR / "categorias.json"
+REGISTRADOS_PATH = DATA_INPUT_DIR / "registrados.json"
+HISTORIAL_PATH = DATA_INPUT_DIR / "historial_nuevos.json"
 CACHE_DIR = Path("data/cache")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -186,6 +188,55 @@ def _guardar_categorias(data: dict[str, list[str]]) -> None:
         cleaned[str(cat)] = dedup
     CATEGORIAS_PATH.write_text(
         json.dumps(cleaned, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _cargar_registrados(seed: set[str]) -> set[str]:
+    if not REGISTRADOS_PATH.exists():
+        registrados = {normalizar_producto(x) for x in seed if x}
+        REGISTRADOS_PATH.write_text(
+            json.dumps(sorted(registrados), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return registrados
+    try:
+        data = json.loads(REGISTRADOS_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        data = []
+    if not isinstance(data, list):
+        data = []
+    registrados = {normalizar_producto(x) for x in data if x}
+    if not registrados and seed:
+        registrados = {normalizar_producto(x) for x in seed if x}
+        REGISTRADOS_PATH.write_text(
+            json.dumps(sorted(registrados), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    return registrados
+
+
+def _guardar_registrados(registrados: set[str]) -> None:
+    REGISTRADOS_PATH.write_text(
+        json.dumps(sorted(registrados), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _cargar_historial() -> dict[str, dict]:
+    if not HISTORIAL_PATH.exists():
+        return {}
+    try:
+        data = json.loads(HISTORIAL_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
+def _guardar_historial(data: dict[str, dict]) -> None:
+    HISTORIAL_PATH.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
 
@@ -364,7 +415,19 @@ async def calcular_inventario(
     merged["deposito"] = merged["deposito"].clip(lower=0)
     merged["caja"] = merged["caja"].clip(lower=0)
 
+    catalogo = _cargar_catalogo()
+    catalogo_set = set(catalogo)
+    registrados = _cargar_registrados(catalogo_set)
+
     if not detalle:
+        vistos = {
+            normalizar_producto(x)
+            for x in merged["producto"].dropna().astype(str).tolist()
+            if x
+        }
+        if vistos - registrados:
+            registrados.update(vistos)
+            _guardar_registrados(registrados)
         resultado = {
             row["producto"]: {
                 "deposito": float(row["deposito"]),
@@ -408,23 +471,38 @@ async def calcular_inventario(
         grupos.setdefault(normal, []).append(original)
     grupos = {k: v for k, v in grupos.items() if len(v) > 1}
 
-    catalogo = _cargar_catalogo()
-    catalogo_set = set(catalogo)
+    registrados_before = set(registrados)
 
     original_list = []
+    nuevos = []
+    vistos = set()
     for _, row in original_merged.iterrows():
         prod = row["producto"]
+        normal = mapping.get(prod, prod)
+        norm_key = normalizar_producto(normal)
+        norm_raw = normalizar_producto(prod)
+        vistos.add(norm_raw)
+        en_catalogo = _en_catalogo(normal, catalogo, catalogo_set)
+        en_catalogo_raw = normalizar_producto(prod) in catalogo_set
+        es_nuevo = (
+            (norm_raw not in registrados_before)
+            and (not en_catalogo_raw)
+            and (prod not in ignorar)
+        )
         original_list.append(
             {
                 "producto": prod,
-                "normalizado": mapping.get(prod, prod),
+                "normalizado": normal,
                 "deposito": float(row["deposito"]),
                 "caja": float(row["caja"]),
                 "barra": float(row["barra"]),
                 "ignorado": prod in ignorar,
-                "catalogo": _en_catalogo(mapping.get(prod, prod), catalogo, catalogo_set),
+                "catalogo": en_catalogo,
+                "nuevo": es_nuevo,
             }
         )
+        if es_nuevo:
+            nuevos.append({"producto": prod, "normalizado": normal})
 
     final_list = [
         {
@@ -436,7 +514,49 @@ async def calcular_inventario(
         for _, row in merged.iterrows()
     ]
 
-    return {"original": original_list, "final": final_list, "grupos": grupos, "token": token}
+    # Deduplicate nuevos by normalizado
+    seen = set()
+    nuevos_dedup = []
+    for item in nuevos:
+        key = normalizar_producto(item["normalizado"])
+        if key in seen:
+            continue
+        seen.add(key)
+        nuevos_dedup.append(item)
+
+    # Actualizar historial de nuevos detectados
+    historial = _cargar_historial()
+    now = pd.Timestamp.now().isoformat()
+    for item in nuevos_dedup:
+        key = normalizar_producto(item["normalizado"])
+        entry = historial.get(key) or {}
+        historial[key] = {
+            "producto": item.get("producto", ""),
+            "normalizado": item.get("normalizado", ""),
+            "first_seen": entry.get("first_seen") or now,
+            "last_seen": now,
+            "count": int(entry.get("count", 0)) + 1,
+        }
+    if nuevos_dedup:
+        _guardar_historial(historial)
+
+    historial_list = list(historial.values())
+    historial_list.sort(key=lambda x: x.get("last_seen", ""), reverse=True)
+
+    # Registrar productos vistos para no repetir alertas en futuros calculos
+    before_len = len(registrados)
+    registrados.update(vistos)
+    if len(registrados) != before_len:
+        _guardar_registrados(registrados)
+
+    return {
+        "original": original_list,
+        "final": final_list,
+        "grupos": grupos,
+        "token": token,
+        "nuevos": nuevos_dedup,
+        "historial_nuevos": historial_list,
+    }
 
 
 @app.get("/")

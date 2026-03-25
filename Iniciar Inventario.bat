@@ -25,4 +25,5 @@ echo Instalando dependencias...
 %PYTHON% -m pip install -r backend\requirements.txt
 
 start "" "http://127.0.0.1:8000/ui"
-%PYTHON% -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+set "PYTHONPATH=%CD%\\backend"
+start "Servidor Inventario" cmd /k "%PYTHON% -m uvicorn backend.main:app --host 127.0.0.1 --port 8000"
