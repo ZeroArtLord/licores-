@@ -71,6 +71,7 @@ const undoStack = [];
 let isUndoing = false;
 
 const GROUP_CLASSES = ["group-1", "group-2", "group-3", "group-4", "group-5"];
+const WINE_CUPS_PER_BOTTLE = 6;
 const DISPLAY_KEY = "display_names";
 const CATEGORIAS_KEY = "categorias";
 
@@ -321,10 +322,26 @@ function renderFinal(items, gruposAll) {
     const key = normalizeKey(item.producto);
     const displayName = getDisplayName(key, item.producto ?? "");
     const categoriaActual = normalizeKey(categoria || "SIN CATEGORIA");
-    const etiquetaBarra =
-      categoriaActual === "VINOS TINTOS" || categoriaActual === "VINOS BLANCOS"
-        ? "COPAS"
-        : "TRAGOS";
+    const esVinoCategoria =
+      categoriaActual === "VINOS TINTOS" ||
+      categoriaActual === "VINOS BLANCOS" ||
+      categoriaActual.startsWith("VINO");
+    const esVinoProducto = normalizeKey(item.producto || "").includes("VINO");
+    const esVino = esVinoCategoria || esVinoProducto;
+    const etiquetaBarra = esVino ? "COPAS" : "TRAGOS";
+    let barraDisplay = `${barra} ${etiquetaBarra}`;
+    if (esVino && Number.isFinite(barra)) {
+      const copas = Math.max(0, Math.round(barra));
+      const botellas = Math.floor(copas / WINE_CUPS_PER_BOTTLE);
+      const resto = copas % WINE_CUPS_PER_BOTTLE;
+      if (botellas > 0 && resto > 0) {
+        barraDisplay = `${botellas} BOTELLAS + ${resto} COPAS`;
+      } else if (botellas > 0) {
+        barraDisplay = `${botellas} BOTELLAS`;
+      } else {
+        barraDisplay = `${resto} COPAS`;
+      }
+    }
     const row = document.createElement("tr");
     row.className = "group-row";
     row.innerHTML = `
@@ -333,7 +350,7 @@ function renderFinal(items, gruposAll) {
         ${totalBotellas} BOTELLAS
       </td>
       <td class="cell-tooltip" title="${etiquetaBarra} ${barra}">
-        ${barra} ${etiquetaBarra}
+        ${barraDisplay}
       </td>
       <td class="no-print actions-col">
         <button class="group-toggle" type="button">Ver</button>
