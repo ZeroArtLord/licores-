@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import json
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 from fastapi import Body, FastAPI, File, UploadFile, Query, Form, HTTPException
@@ -24,10 +25,16 @@ from uuid import uuid4
 
 app = FastAPI(title="Inventario Licores")
 
+_cors_origins_env = os.getenv("CORS_ORIGINS", "").strip()
+if _cors_origins_env:
+    CORS_ORIGINS = [origin.strip() for origin in _cors_origins_env.split(",") if origin.strip()]
+else:
+    CORS_ORIGINS = ["http://localhost", "http://localhost:5500", "http://127.0.0.1:5500"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=os.getenv("CORS_ALLOW_CREDENTIALS", "1") == "1",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -59,8 +66,33 @@ IGNORE_PATH = DATA_INPUT_DIR / "ignorar.csv"
 CATEGORIAS_PATH = DATA_INPUT_DIR / "categorias.json"
 REGISTRADOS_PATH = DATA_INPUT_DIR / "registrados.json"
 HISTORIAL_PATH = DATA_INPUT_DIR / "historial_nuevos.json"
+CONVERSIONES_PATH = DATA_INPUT_DIR / "conversiones.json"
 CACHE_DIR = Path("data/cache")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
+CACHE_TTL_HOURS = int(os.getenv("CACHE_TTL_HOURS", "24"))
+
+
+def _cleanup_cache_dir() -> None:
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=max(CACHE_TTL_HOURS, 1))
+    for entry in CACHE_DIR.iterdir():
+        if not entry.is_dir():
+            continue
+        try:
+            modified = datetime.fromtimestamp(entry.stat().st_mtime, tz=timezone.utc)
+        except OSError:
+            continue
+        if modified >= cutoff:
+            continue
+        for item in entry.glob("*"):
+            try:
+                if item.is_file():
+                    item.unlink(missing_ok=True)
+            except OSError:
+                pass
+        try:
+            entry.rmdir()
+        except OSError:
+            pass
 
 
 def _cargar_equivalencias() -> dict[str, str]:
@@ -240,6 +272,51 @@ def _guardar_historial(data: dict[str, dict]) -> None:
     )
 
 
+def _cargar_conversiones() -> dict:
+    if not CONVERSIONES_PATH.exists():
+        return {"categorias": {}, "productos": {}}
+    try:
+        data = json.loads(CONVERSIONES_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {"categorias": {}, "productos": {}}
+    if not isinstance(data, dict):
+        return {"categorias": {}, "productos": {}}
+    data.setdefault("categorias", {})
+    data.setdefault("productos", {})
+    return data
+
+
+def _guardar_conversiones(data: dict) -> None:
+    if CONVERSIONES_PATH.exists():
+        backup = CONVERSIONES_PATH.with_name(
+            f"backup_conversiones_{pd.Timestamp.now():%Y%m%d_%H%M%S}.json"
+        )
+        backup.write_text(
+            CONVERSIONES_PATH.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+    # Sanitizar
+    cleaned = {"categorias": {}, "productos": {}}
+    for k, v in (data.get("categorias") or {}).items():
+        try:
+            num = float(v)
+        except (TypeError, ValueError):
+            continue
+        if num <= 0:
+            continue
+        cleaned["categorias"][str(k)] = num
+    for k, v in (data.get("productos") or {}).items():
+        try:
+            num = float(v)
+        except (TypeError, ValueError):
+            continue
+        if num <= 0:
+            continue
+        cleaned["productos"][str(k)] = num
+    CONVERSIONES_PATH.write_text(
+        json.dumps(cleaned, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
 @app.post("/normalizacion/guardar")
 async def guardar_normalizacion(payload: dict = Body(...)):
     equivalencias = payload.get("equivalencias", [])
@@ -308,6 +385,19 @@ async def guardar_categorias(payload: dict = Body(...)):
     return {"ok": True, "total": len(cleaned)}
 
 
+@app.get("/conversiones")
+async def obtener_conversiones():
+    return _cargar_conversiones()
+
+
+@app.post("/conversiones/guardar")
+async def guardar_conversiones(payload: dict = Body(...)):
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Formato invalido")
+    _guardar_conversiones(payload)
+    return {"ok": True}
+
+
 @app.post("/inventario")
 @app.post("/api/inventario")
 async def calcular_inventario(
@@ -317,6 +407,8 @@ async def calcular_inventario(
     detalle: bool = Query(False),
     token: str | None = Form(None),
 ):
+    _cleanup_cache_dir()
+
     saint_bytes = None
     caja_bytes = None
     barra_bytes = None

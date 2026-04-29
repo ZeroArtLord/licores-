@@ -34,6 +34,7 @@ const listaCsvEl = document.getElementById("lista-csv");
 const exportarPdfBtn = document.getElementById("exportar-pdf");
 const categoriaSelectEl = document.getElementById("categoria-select");
 const categoriaSelectBarEl = document.getElementById("categoria-select-bar");
+const convCategoriaSelectEl = document.getElementById("conv-categoria");
 const categoriaNuevaEl = document.getElementById("categoria-nueva");
 const crearCategoriaBtn = document.getElementById("crear-categoria");
 const asignarCategoriaBtn = document.getElementById("asignar-categoria");
@@ -74,6 +75,9 @@ const GROUP_CLASSES = ["group-1", "group-2", "group-3", "group-4", "group-5"];
 const WINE_CUPS_PER_BOTTLE = 6;
 const DISPLAY_KEY = "display_names";
 const CATEGORIAS_KEY = "categorias";
+const CONVERSIONES_KEY = "conversiones";
+
+let conversiones = { categorias: {}, productos: {} };
 
 function normalizeKey(value) {
   return String(value || "")
@@ -151,6 +155,19 @@ function saveCategorias() {
   }).catch(() => {});
 }
 
+function loadConversiones() {
+  try {
+    const raw = localStorage.getItem(CONVERSIONES_KEY);
+    conversiones = raw ? JSON.parse(raw) : { categorias: {}, productos: {} };
+  } catch (_) {
+    conversiones = { categorias: {}, productos: {} };
+  }
+}
+
+function saveConversiones() {
+  localStorage.setItem(CONVERSIONES_KEY, JSON.stringify(conversiones));
+}
+
 function buildCategoriaIndex() {
   const map = new Map();
   for (const [cat, keys] of Object.entries(categorias || {})) {
@@ -215,6 +232,7 @@ function renderCategoriasUI() {
   categoriaSelectEl.innerHTML = "";
   if (categoriaSelectBarEl) categoriaSelectBarEl.innerHTML = "";
   if (categoriaFiltroEl) categoriaFiltroEl.innerHTML = "";
+  if (convCategoriaSelectEl) convCategoriaSelectEl.innerHTML = "";
   const empty = document.createElement("option");
   empty.value = "";
   empty.textContent = "Sin categoria";
@@ -233,6 +251,10 @@ function renderCategoriasUI() {
     optNone.textContent = "Solo sin categoria";
     categoriaFiltroEl.appendChild(optNone);
   }
+  if (convCategoriaSelectEl) {
+    const emptyConv = empty.cloneNode(true);
+    convCategoriaSelectEl.appendChild(emptyConv);
+  }
   for (const cat of cats) {
     const opt = document.createElement("option");
     opt.value = cat;
@@ -246,6 +268,10 @@ function renderCategoriasUI() {
       const optFilter = opt.cloneNode(true);
       categoriaFiltroEl.appendChild(optFilter);
     }
+    if (convCategoriaSelectEl) {
+      const optConv = opt.cloneNode(true);
+      convCategoriaSelectEl.appendChild(optConv);
+    }
   }
   listaCategoriasEl.innerHTML = "";
   if (cats.length === 0) {
@@ -258,6 +284,18 @@ function renderCategoriasUI() {
     tag.textContent = `${cat} (${(categorias[cat] || []).length})`;
     listaCategoriasEl.appendChild(tag);
   }
+}
+
+function getTragosPorBotella(producto, categoria) {
+  const prodKey = normalizeKey(producto);
+  if (prodKey && conversiones.productos && conversiones.productos[prodKey]) {
+    return Number(conversiones.productos[prodKey]);
+  }
+  const catKey = normalizeKey(categoria);
+  if (catKey && conversiones.categorias && conversiones.categorias[catKey]) {
+    return Number(conversiones.categorias[catKey]);
+  }
+  return null;
 }
 
 function setStatus(message, isError = false) {
@@ -330,16 +368,19 @@ function renderFinal(items, gruposAll) {
     const esVino = esVinoCategoria || esVinoProducto;
     const etiquetaBarra = esVino ? "COPAS" : "TRAGOS";
     let barraDisplay = `${barra} ${etiquetaBarra}`;
-    if (esVino && Number.isFinite(barra)) {
-      const copas = Math.max(0, Math.round(barra));
-      const botellas = Math.floor(copas / WINE_CUPS_PER_BOTTLE);
-      const resto = copas % WINE_CUPS_PER_BOTTLE;
+    const tragosPorBotella =
+      getTragosPorBotella(item.producto, categoria) ??
+      (esVino ? WINE_CUPS_PER_BOTTLE : null);
+    if (tragosPorBotella && Number.isFinite(barra)) {
+      const total = Math.max(0, Math.round(barra));
+      const botellas = Math.floor(total / tragosPorBotella);
+      const resto = total % tragosPorBotella;
       if (botellas > 0 && resto > 0) {
-        barraDisplay = `${botellas} BOTELLAS + ${resto} COPAS`;
+        barraDisplay = `${botellas} BOTELLAS + ${resto} ${etiquetaBarra}`;
       } else if (botellas > 0) {
         barraDisplay = `${botellas} BOTELLAS`;
       } else {
-        barraDisplay = `${resto} COPAS`;
+        barraDisplay = `${resto} ${etiquetaBarra}`;
       }
     }
     const row = document.createElement("tr");
@@ -1430,3 +1471,48 @@ if (csvRevisionInput) {
     }
   });
 }
+
+// Conversiones
+loadConversiones();
+fetch("/conversiones")
+  .then((r) => r.json())
+  .then((data) => {
+    if (data && typeof data === "object") {
+      conversiones = {
+        categorias: data.categorias || {},
+        productos: data.productos || {},
+      };
+      saveConversiones();
+      aplicarCambiosVisuales();
+    }
+  })
+  .catch(() => {});
+
+function refreshConversionesFromStorage() {
+  loadConversiones();
+  aplicarCambiosVisuales();
+}
+
+window.addEventListener("storage", (e) => {
+  if (e.key === CONVERSIONES_KEY) {
+    refreshConversionesFromStorage();
+  }
+});
+
+window.addEventListener("focus", () => {
+  fetch("/conversiones")
+    .then((r) => r.json())
+    .then((data) => {
+      if (data && typeof data === "object") {
+        conversiones = {
+          categorias: data.categorias || {},
+          productos: data.productos || {},
+        };
+        saveConversiones();
+        aplicarCambiosVisuales();
+      }
+    })
+    .catch(() => {
+      refreshConversionesFromStorage();
+    });
+});

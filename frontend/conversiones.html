@@ -1,0 +1,70 @@
+﻿<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Conversiones de Tragos</title>
+    <link rel="stylesheet" href="assets/css/styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header class="header">
+        <h1>CONVERSIONES DE TRAGOS</h1>
+        <p>Define cuántos tragos/copas tiene una botella por categoria o por producto.</p>
+        <div class="conversiones-nav">
+          <a class="ghost-btn" href="index.html">VOLVER AL INVENTARIO</a>
+        </div>
+      </header>
+
+      <section class="card no-print">
+        <h2>Reglas por categoria</h2>
+        <div class="conversion-row">
+          <label for="conv-categoria">Categoria</label>
+          <select id="conv-categoria"></select>
+          <input id="conv-categoria-tragos" type="number" min="1" step="1" placeholder="Tragos por botella" />
+          <button id="conv-categoria-add" class="secondary-btn" type="button">Guardar</button>
+        </div>
+        <div id="conv-categoria-list" class="rule-list"></div>
+      </section>
+
+      <section class="card no-print">
+        <h2>Reglas por producto</h2>
+        <div class="conversiones-toolbar">
+          <div class="conversion-row">
+            <label for="conv-producto">Producto</label>
+            <input id="conv-producto" type="text" placeholder="Nombre del producto" />
+            <input id="conv-producto-tragos" type="number" min="1" step="1" placeholder="Tragos por botella" />
+            <button id="conv-producto-add" class="secondary-btn" type="button">Agregar</button>
+          </div>
+          <div class="conversion-row">
+            <label for="conv-buscar">Buscar</label>
+            <input id="conv-buscar" type="text" placeholder="Buscar producto..." />
+            <select id="conv-orden">
+              <option value="categoria">Ordenar por categoria</option>
+              <option value="alfabetico">Ordenar alfabetico</option>
+            </select>
+            <select id="conv-filtro-categoria">
+              <option value="">Todas las categorias</option>
+            </select>
+          </div>
+        </div>
+        <div class="table-wrap conv-table-wrap">
+          <table class="conv-table">
+            <thead>
+              <tr>
+                <th>Producto</th>
+                <th>Categoria</th>
+                <th>Tragos por botella</th>
+                <th class="no-print">Accion</th>
+              </tr>
+            </thead>
+            <tbody id="conv-producto-list"></tbody>
+          </table>
+        </div>
+      </section>
+      <p id="conv-status" class="status" role="status"></p>
+    </main>
+
+    <script src="assets/js/conversiones.js?v=20260325-2"></script>
+  </body>
+</html>
